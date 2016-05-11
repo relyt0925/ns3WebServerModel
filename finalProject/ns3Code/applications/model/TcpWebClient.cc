@@ -1,6 +1,7 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * Copyright 2007 University of Washington
+
  * 
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -14,6 +15,11 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ */
+/**
+ * Model for Web Browser Client. Implements behavior described in the Jeffay
+ * "Tuning RED for Web Traffic" Paper. Simulates real human behavior
+ * @author Tyler Lisowski
  */
 #include "TcpWebClient.h"
 
@@ -33,10 +39,13 @@
 
 namespace ns3 {
 
+//define UNIQUE component name and ensured its registered
 NS_LOG_COMPONENT_DEFINE ("TcpWebClientApplication");
 
 NS_OBJECT_ENSURE_REGISTERED (TcpWebClient);
 
+//set NS3 attributes to allow access to have them set dynamically
+//also sets default values
 TypeId
 TcpWebClient::GetTypeId (void)
 {
@@ -64,6 +73,9 @@ TcpWebClient::GetTypeId (void)
   return tid;
 }
 
+/**
+ * InitializeModelDistributions- reads distributions from provided file and sets CDF curves
+ */
 void TcpWebClient::InitializeModelDistributions(){
 	  numFilesToFetchGenerator = CreateObject<EmpiricalRandomVariable> ();
 	  thinkTimeGenerator = CreateObject<EmpiricalRandomVariable> ();
@@ -93,25 +105,25 @@ void TcpWebClient::InitializeModelDistributions(){
 	for(uint32_t i=0; i<sizeof(httpDist::filesPerPage)/sizeof(httpDist::intd_t);i++){
 		numFilesToFetchGenerator->CDF(httpDist::filesPerPage[i].i,httpDist::filesPerPage[i].d);
 	}
+	//get number of pages to be fetched by this browser instance by sampling CDF
 	m_totalPagesToFetch=(uint32_t)totalPagesToFetchGenerator->GetValue();
-	//m_totalPagesToFetch=20;
-	NS_LOG_FUNCTION("TOTAL PAGES: " << m_totalPagesToFetch);
+	//NS_LOG_FUNCTION("TOTAL PAGES: " << m_totalPagesToFetch);
 }
 
+/**
+ * Constructor- initializes class variables
+ */
 TcpWebClient::TcpWebClient ()
 {
-  NS_LOG_FUNCTION (this);
   m_sent = 0;
   m_sendEvent = EventId ();
   InitializeModelDistributions();
-  NS_LOG_FUNCTION("FINESHED");
 }
 
 TcpWebClient::~TcpWebClient()
 {
-  NS_LOG_FUNCTION (this);
 }
-
+//Sets remote IP address and port for different address types
 void 
 TcpWebClient::SetRemote (Address ip, uint16_t port)
 {
@@ -136,6 +148,7 @@ TcpWebClient::SetRemote (Ipv6Address ip, uint16_t port)
   m_peerPort = port;
 }
 
+//Inherited method; just logs and does normal method (really no need for it)
 void
 TcpWebClient::DoDispose (void)
 {
@@ -143,6 +156,7 @@ TcpWebClient::DoDispose (void)
   Application::DoDispose ();
 }
 
+//Sets up application and schedules first events (HAS TO SCHEDULE EVENTS)
 void 
 TcpWebClient::StartApplication (void)
 {
@@ -150,35 +164,42 @@ TcpWebClient::StartApplication (void)
   StartNewServerConnection(true);
 }
 
+//callback for when TCP connection successfully closed
 void 
 TcpWebClient::HandleSuccessfulClose(Ptr<Socket> socket){
 	NS_LOG_FUNCTION (this);
 }
 
+//callback for when error occurs when closing TCP connection
 void
 TcpWebClient::HandleErrorClose(Ptr<Socket> socket){
 	NS_LOG_FUNCTION (this);
 }
 
+//Stops application and ensures all resources are cleared
 void
 TcpWebClient::StopApplication ()
 {
   NS_LOG_FUNCTION (this);
+  //Close every socket and make sure the receive callbacks are null
   for(uint32_t i=0;i<m_primarySockets.size();i++){
 	  m_primarySockets[i]->Close();
 	  m_primarySockets[i]->SetRecvCallback (MakeNullCallback<void, Ptr<Socket> > ());
 	  m_primarySockets[i]=0;
   }
   m_primarySockets.clear();
+  //Do the same for the secondary sockets
   for(uint32_t i=0;i<m_secondarySockets.size();i++){
 	  m_secondarySockets[i]->Close();
 	  m_secondarySockets[i]->SetRecvCallback (MakeNullCallback<void, Ptr<Socket> > ());
 	  m_secondarySockets[i]=0;
   }
-  Simulator::Cancel (m_sendEvent);
+  //TODO: HAVE LIST OF FUTURE EVENTS TO CANCEL
+  //cancel any events (NEED TO KEEP LIST OF SCHEDULED EVENTS NOT DONE HERE)
+  Simulator::Cancel(m_sendEvent);
 }
 
-
+//Schedules callback that will initate new primary connection
 void 
 TcpWebClient::ScheduleTransmit (Time dt)
 {
@@ -188,11 +209,13 @@ TcpWebClient::ScheduleTransmit (Time dt)
   m_sendEvent = Simulator::Schedule (dt, &TcpWebClient::StartNewServerConnection, this, true);
 }
 
+//Starts a new connection (either primary or secondary) and simulates sending request
 void TcpWebClient::StartNewServerConnection(bool isPrimary){
 
-	NS_LOG_FUNCTION (this << isPrimary);
+	//NS_LOG_FUNCTION (this << isPrimary);
+	//create new TCP socket
 	TypeId tid = TypeId::LookupByName ("ns3::TcpSocketFactory");
-	Ptr<Socket> newSocket = Socket::CreateSocket (GetNode (), tid);
+	Ptr<Socket> newSocket = Socket::CreateSocket (GetNode(), tid);
     // Fatal error if socket type is not NS3_SOCK_STREAM or NS3_SOCK_SEQPACKET
     if (newSocket->GetSocketType () != Socket::NS3_SOCK_STREAM &&
     		newSocket->GetSocketType () != Socket::NS3_SOCK_SEQPACKET)
@@ -202,13 +225,18 @@ void TcpWebClient::StartNewServerConnection(bool isPrimary){
                         "In other words, use TCP instead of UDP.");
       }
     NS_LOG_FUNCTION (this << newSocket);
+    //reserve port on the machine
     newSocket->Bind();
+    //initiate connection to remote machine
     newSocket->Connect(InetSocketAddress (Ipv4Address::ConvertFrom(m_peerAddress), m_peerPort));
+    //set callbacks to handle successful exchange or failure
     newSocket->SetConnectCallback (
               MakeCallback (&TcpWebClient::ConnectionSucceeded, this),
               MakeCallback (&TcpWebClient::ConnectionFailed, this));
+    //set callback for when data is received over channel
     newSocket->SetRecvCallback (MakeCallback (&TcpWebClient::HandleRead, this));
     NS_LOG_FUNCTION ("IS PRIMARY: " << isPrimary);
+    //push new socket back in proper category
     if(isPrimary){
     	m_primarySockets.push_back(newSocket);
     	m_primarySocketsDataRemaining.push_back(1);
@@ -219,7 +247,8 @@ void TcpWebClient::StartNewServerConnection(bool isPrimary){
     }
 }
 
-
+//sends data over the TCP socket with the specified request size and response size
+//response size used by Web server to set request size
 void 
 TcpWebClient::Send (uint32_t requestSize, uint32_t responseSize, Ptr<Socket> socketToSend)
 {
@@ -228,50 +257,38 @@ TcpWebClient::Send (uint32_t requestSize, uint32_t responseSize, Ptr<Socket> soc
   //NS_ASSERT (m_sendEvent.IsExpired ());
 
   Ptr<Packet> p;
-      //
-      // If m_dataSize is zero, the client has indicated that it doesn't care
-      // about the data itself either by specifying the data size by setting
-      // the corresponding attribute or by not calling a SetFill function.  In
-      // this case, we don't worry about it either.  But we do allow m_size
-      // to have a value different from the (zero) m_dataSize.
-      //
+
+  //allocates amount of data with reques size (in bytes)
   uint8_t * packetData= new uint8_t[requestSize];
+  //puts request size in first 4 bytes
   packetData[0]=(requestSize & 0xff000000) >> 24;
   packetData[1]=(requestSize & 0x00ff0000) >> 16;
   packetData[2]=(requestSize & 0x0000ff00) >> 8;
   packetData[3]=(requestSize & 0x000000ff);
+  //puts response size in next 4 bytes
   packetData[4]=(responseSize & 0xff000000) >> 24;
   packetData[5]=(responseSize & 0x00ff0000) >> 16;
   packetData[6]=(responseSize & 0x0000ff00) >> 8;
   packetData[7]=(responseSize & 0x000000ff);
+  //creates a packet with the specified data
   p = Create<Packet> (packetData,requestSize);
+  //clear packetData since packet created
   delete[] packetData;
   // call to the trace sinks before the packet is actually sent,
   // so that tags added to the packet can be sent as well
   m_txTrace (p);
+  //send the packet
   socketToSend->Send(p);
-  NS_LOG_FUNCTION("" << socketToSend << p->GetSize());
-
+  //NS_LOG_FUNCTION("" << socketToSend << p->GetSize());
+  //increment the number of packets that have been sent
   ++m_sent;
-/*
-  if (Ipv4Address::IsMatchingType (m_peerAddress))
-    {
-      NS_LOG_INFO ("At time " << Simulator::Now ().GetSeconds () << "s client sent " << m_size << " bytes to " <<
-                   Ipv4Address::ConvertFrom (m_peerAddress) << " port " << m_peerPort);
-    }
-  else if (Ipv6Address::IsMatchingType (m_peerAddress))
-    {
-      NS_LOG_INFO ("At time " << Simulator::Now ().GetSeconds () << "s client sent " << m_size << " bytes to " <<
-                   Ipv6Address::ConvertFrom (m_peerAddress) << " port " << m_peerPort);
-    }
-    */
-  //update last sent time
+  //update last sent time (to calculate response time)
   if(m_primarySockets.size()!=0){
 	  if(socketToSend==m_primarySockets[0])
 		  m_timeOfLastSentPacket=Simulator::Now().GetSeconds();
   }
 }
-
+//callback for handling reading data out of the socket
 void
 TcpWebClient::HandleRead (Ptr<Socket> socket)
 {
@@ -279,6 +296,7 @@ TcpWebClient::HandleRead (Ptr<Socket> socket)
   Ptr<Packet> packet;
   Address from;
   uint32_t totalDataReceived=0;
+  //JUST receive data from the socket (dont need to store any of it at all)
   while ((packet = socket->RecvFrom (from)))
     {
       if (InetSocketAddress::IsMatchingType (from))
@@ -295,12 +313,16 @@ TcpWebClient::HandleRead (Ptr<Socket> socket)
         }
       totalDataReceived+=packet->GetSize();
     }
+  //check to see if all the data has been received for the socket (response fully sent)
   if(m_primarySockets.size()!=0){
+	  //if primary socket exists, there is no secondary connections and data has to be from it
 	  if(socket==m_primarySockets[0]){
 		  m_primarySocketsDataRemaining[0]-=totalDataReceived;
 		  NS_LOG_FUNCTION("TOTAL DATA REMAINING" << m_primarySocketsDataRemaining[0]);
+		  //if received all data, spin off concurrent connections to fetch web objects
 		  if(m_primarySocketsDataRemaining[0]==0){
-			  //socket->Close();
+			  //socket->Close(); (CAUSED ERRORS)
+			  //erase data for primary socket
 			  m_primarySockets.erase(m_primarySockets.begin());
 			  m_primarySocketsDataRemaining.erase(m_primarySocketsDataRemaining.begin());
 			  //spin up secondary sockets
@@ -310,37 +332,45 @@ TcpWebClient::HandleRead (Ptr<Socket> socket)
 			  else
 				  numOfSecondarySocketsToSpin=m_maxConncurrentSockets;
 			  NS_LOG_FUNCTION("START NUM FILES:" << m_numFilesToFetch);
+			  //spin off each new connection
 			  for(uint32_t i=m_secondarySockets.size();i<numOfSecondarySocketsToSpin;i++){
 				  StartNewServerConnection(false);
 			  }
 		  }
 	  }
   }
+  //otherwise check to see which secondary socket data is from
   for(uint32_t i=0;i<m_secondarySockets.size();i++){
 	  if(socket==m_secondarySockets[i]){
 		  m_secondarySocketsDataRemaining[i]-=totalDataReceived;
+		  //if all data received, see if need to spin new connection to get another web object
 		  if(m_secondarySocketsDataRemaining[i]==0){
 			  m_numFilesToFetch--;
 			  NS_LOG_FUNCTION("NUM FILES" << m_numFilesToFetch);
 			  //socket->Close();
+			  //clean up data around socket
 			  m_secondarySockets.erase(m_secondarySockets.begin()+i);
 			  m_secondarySocketsDataRemaining.erase(m_secondarySocketsDataRemaining.begin()+i);
+			  //spin up new connection if not all objects have been fetched or actively being fetched
 			  if(m_numFilesToFetch>m_secondarySockets.size() && m_secondarySockets.size()<m_maxConncurrentSockets){
 				  StartNewServerConnection(false);
 			  }
+			  //otherwise wait think time and schedule new connection
 			  else if(m_numFilesToFetch==0){
 				  //YOU HAVE FETCHED ALL FILES, WAIT THINKTIME AND THEN START NEW PRIMARY CONNECTION
 				  RequestDataStruct a;
+				  //calculate response time
 				  a.requestExecutionTime=Simulator::Now().GetSeconds()-m_timeOfLastSentPacket;
 				  a.requestStart=m_timeOfLastSentPacket;
 				  m_responseTimes.push_back(a);
-				  //increase load (if not remove 10
+				  //think time decreased by a factor of 10 (as in experiment)
 				  double thinkT=thinkTimeGenerator->GetValue()/10;
 				  Time thinkTime= Seconds(thinkT);
+				  //decrement number of pages that need to be fetched
 				  m_totalPagesToFetch--;
 				  NS_LOG_FUNCTION("TOT PAGES REM: " << m_totalPagesToFetch);
 				  if(m_totalPagesToFetch>0){
-					  //thinkTime=Seconds(1.0);
+					  //wait think time and schedule next transmit
 					  ScheduleTransmit(thinkTime);
 				  }
 			  }
@@ -350,6 +380,8 @@ TcpWebClient::HandleRead (Ptr<Socket> socket)
   }
 }
 
+//callback for when the connection succeeds
+//sets up the response and request size for the sockets
 void TcpWebClient::ConnectionSucceeded (Ptr<Socket> socket)
 {
   NS_LOG_FUNCTION (this << socket);
@@ -384,15 +416,17 @@ void TcpWebClient::ConnectionSucceeded (Ptr<Socket> socket)
   }
   NS_LOG_FUNCTION("ACT RESPONSE SIZE: " << responseSize);
   NS_LOG_FUNCTION("ACT REQUEST SIZE: " << requestSize);
+  //schedule transmit of the request over the socket
   Send(requestSize,responseSize,socket);
 }
 
+//callback for when TCP connection fails
 void TcpWebClient::ConnectionFailed (Ptr<Socket> socket)
 {
   NS_LOG_FUNCTION (this << socket);
 }
 
-
+//returns response time tracker for every request
 std::vector<RequestDataStruct> TcpWebClient::getResponseTimes(){
 	return m_responseTimes;
 }

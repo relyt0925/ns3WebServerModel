@@ -34,7 +34,7 @@
 #include "ns3/uinteger.h"
 
 namespace ns3 {
-
+//unique component name
 NS_LOG_COMPONENT_DEFINE ("TcpWebServerApplication");
 
 NS_OBJECT_ENSURE_REGISTERED (TcpWebServer);
@@ -93,6 +93,7 @@ TcpWebServer::GetListeningSocket (void) const
   return m_socket;
 }
 
+//this returns all the accepted sockets
 std::vector<Ptr<Socket> >
 TcpWebServer::GetAcceptedSockets (void) const
 {
@@ -100,6 +101,7 @@ TcpWebServer::GetAcceptedSockets (void) const
   return m_socketList;
 }
 
+//called when simulation ends
 void TcpWebServer::DoDispose (void)
 {
   NS_LOG_FUNCTION (this);
@@ -115,9 +117,10 @@ void TcpWebServer::DoDispose (void)
 void TcpWebServer::StartApplication ()    // Called at time specified by Start
 {
   NS_LOG_FUNCTION (this);
-  // Create the socket if not already
+  // Create the socket and bind and listen
   if (!m_socket)
     {
+	  //create and listen on port
       m_socket = Socket::CreateSocket (GetNode (), m_tid);
       m_socket->Bind (m_local);
       m_socket->Listen ();
@@ -135,11 +138,13 @@ void TcpWebServer::StartApplication ()    // Called at time specified by Start
             }
         }
     }
-
+  //set receive callback
   m_socket->SetRecvCallback (MakeCallback (&TcpWebServer::HandleRead, this));
+  //set proper accept callback
   m_socket->SetAcceptCallback (
     MakeNullCallback<bool, Ptr<Socket>, const Address &> (),
     MakeCallback (&TcpWebServer::HandleAccept, this));
+  //set proper close callback
   m_socket->SetCloseCallbacks (
     MakeCallback (&TcpWebServer::HandlePeerClose, this),
     MakeCallback (&TcpWebServer::HandlePeerError, this));
@@ -195,9 +200,13 @@ void TcpWebServer::HandleRead (Ptr<Socket> socket)
       //m_txTrace (p);
       //socket->SendTo (p, 0, from);
       //socket->Close();
+      //check which socket data received from
       for(uint32_t i=0;i<m_socketList.size();i++){
     	  if(socket==m_socketList[i]){
+    		  //append packet data
     		  m_inTransitPackets[i]->AddAtEnd(packet);
+    		  //if received first 8 bytes can get request size (seems to constantly get it every time data received
+    		  //TODO: can be optimized by only getting it once (check if m_totalRequestSize initialized)
     		  if(m_inTransitPackets[i]->GetSize()-packet->GetSize()<8 && m_inTransitPackets[i]->GetSize()>=8){
     			  uint8_t* packetData= new uint8_t[m_inTransitPackets[i]->GetSize()];
     			  packet->CopyData(packetData,m_inTransitPackets[i]->GetSize());
@@ -209,24 +218,24 @@ void TcpWebServer::HandleRead (Ptr<Socket> socket)
     			  m_totalRequestSize[i]=requestSize;
     			  delete[] packetData;
     		  }
+    		  //then check to see if total data received
     		  if(m_totalRequestSize[i]==m_inTransitPackets[i]->GetSize()){
+    			  //if so send response data
     			  NS_LOG_FUNCTION("CompleteResponseSize:" << m_inTransitPackets[i]->GetSize());
     			  uint8_t* packetData= new uint8_t[m_inTransitPackets[i]->GetSize()];
     			  m_inTransitPackets[i]->CopyData(packetData,m_inTransitPackets[i]->GetSize());
-    			  uint32_t requestSize= ((uint32_t)packetData[0]) << 24;
-    			  requestSize= (requestSize + ((uint32_t)packetData[1]) ) << 16;
-    			  requestSize= (requestSize + ((uint32_t)packetData[2]) ) << 8;
-    			  requestSize= requestSize + ((uint32_t)packetData[3]);
-    			  NS_LOG_FUNCTION("TOTAL PACKET REQ SIZE" << requestSize);
+    			  //get total response size (next 4 bytes)
     			  uint32_t responseSize= ((uint32_t)packetData[4]) << 24;
     			  responseSize= responseSize + (((uint32_t)packetData[5])  << 16);
     			  responseSize= responseSize + (((uint32_t)packetData[6])  << 8);
     			  responseSize= responseSize + ((uint32_t)packetData[7]);
-    			  NS_LOG_FUNCTION("Response Size:" << responseSize);
+    			  //NS_LOG_FUNCTION("Response Size:" << responseSize);
+    			  //create the packet (size is response size and send)
     			  Ptr<Packet> p = Create<Packet>(responseSize);
     			  socket->Send(p);
     			  socket->Close();
-    			  NS_LOG_INFO("DONEEEEE WITH PACKETTSSSS");
+    			  //NS_LOG_INFO("DONEEEEE WITH PACKETTSSSS");
+    			  //clear socket since we are finished sending data
     			  m_inTransitPackets.erase(m_inTransitPackets.begin()+i);
     			  m_totalRequestSize.erase(m_totalRequestSize.begin()+i);
     			  m_socketList.erase(m_socketList.begin()+i);
@@ -237,28 +246,29 @@ void TcpWebServer::HandleRead (Ptr<Socket> socket)
     }
 }
 
-
+//callback if peer closes the tcp socket
 void TcpWebServer::HandlePeerClose (Ptr<Socket> socket)
 {
   NS_LOG_FUNCTION (this << socket);
 }
-
+//callback for error on TCP socket
 void TcpWebServer::HandlePeerError (Ptr<Socket> socket)
 {
   NS_LOG_FUNCTION (this << socket);
 }
 
-
+//callback to handle a client connection
 void TcpWebServer::HandleAccept (Ptr<Socket> s, const Address& from)
 {
   NS_LOG_FUNCTION (this << s << from);
+  //sets receive callback for the newly accepted socket
   s->SetRecvCallback (MakeCallback (&TcpWebServer::HandleRead, this));
+  //add socket to active socket list and initialize total request data and request size
+  //inTransitPackets acts as buffer to hold intermidary data until request all comes in
+  //total Request size is used to know when all packet data arrives
   m_socketList.push_back (s);
   m_inTransitPackets.push_back(Create<Packet>());
   m_totalRequestSize.push_back(500000000);
-  //Ptr<Packet> p = Create<Packet>(1024);
-  //s->Send(p);
-  //s->Close();
 }
 
 

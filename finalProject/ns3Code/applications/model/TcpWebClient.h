@@ -30,18 +30,14 @@ namespace ns3 {
 
 class Socket;
 class Packet;
+//data stored for each request
 typedef struct
 {
   double requestStart;
   double requestExecutionTime;
 } RequestDataStruct;
 
-/**
- * \ingroup udpecho
- * \brief A Udp Echo client
- *
- * Every packet sent should be returned by the server and received here.
- */
+//Implements TCP web client model based on Jeffay's Tuning Red Paper
 class TcpWebClient : public Application
 {
 public:
@@ -123,15 +119,18 @@ private:
   Address m_peerAddress; //!< Remote peer address
   uint16_t m_peerPort; //!< Remote peer port
   EventId m_sendEvent; //!< Event to send the next packet
-  std::vector<RequestDataStruct> m_responseTimes;
-  double m_timeOfLastSentPacket;
-  std::vector< Ptr<Socket> > m_primarySockets;
-  std::vector< Ptr<Socket> > m_secondarySockets;
+  std::vector<RequestDataStruct> m_responseTimes; //response time tracker for all requests
+  double m_timeOfLastSentPacket; //holds time of last sent request
+  std::vector< Ptr<Socket> > m_primarySockets; //tracker for active primary socket
+  std::vector< Ptr<Socket> > m_secondarySockets; //tracker for active secondary sockets
+  //tracker for remaining data needed to be received by primary socket
   std::vector<uint32_t> m_primarySocketsDataRemaining;
+  //tracker for remaining data needed to be received by each secondary socket
   std::vector<uint32_t> m_secondarySocketsDataRemaining;
-  uint32_t m_maxConncurrentSockets;
-  uint32_t m_numFilesToFetch;
-  uint32_t m_totalPagesToFetch;
+  uint32_t m_maxConncurrentSockets; //max number of conncurrent TCP connecions
+  uint32_t m_numFilesToFetch; //number of web objects to fetch per page
+  uint32_t m_totalPagesToFetch; //number of pages to fetch in session
+  //CDFs for each of the parameters based on real world data
   Ptr<EmpiricalRandomVariable> numFilesToFetchGenerator ;
   Ptr<EmpiricalRandomVariable> thinkTimeGenerator;
   Ptr<EmpiricalRandomVariable> primaryRequestSizeGenerator;
@@ -145,4 +144,4 @@ private:
 
 } // namespace ns3
 
-#endif /* UDP_ECHO_CLIENT_H */
+#endif
